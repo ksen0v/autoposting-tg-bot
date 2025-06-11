@@ -3,7 +3,7 @@
  - using Aiogram version 3.5.0
  - using CryptoBot @CryptoBot
 
-[![N|Solid](https://github.com/user-attachments/assets/47563e46-5773-4a8f-87cd-e52e85ec4a61)](https://www.python.org/)
+[![N|Solid](![image](https://github.com/user-attachments/assets/ae137430-ba6c-431e-b64f-14890e93e471))](https://www.python.org/)
 
 ## INSTALL
 - Install requirements:
