@@ -1,0 +1,553 @@
+import asyncio
+import sqlite3
+from datetime import datetime, timedelta
+
+from utils.logger import logger
+from utils.config_loader import COUNTDOWN
+
+database_path = 'bot_database.db'
+
+
+async def init_db() -> None:
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    # USER TABLE
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        username TEXT,
+        registration_date TEXT DEFAULT (DATETIME('now', 'localtime')),
+        balance REAL DEFAULT 0.0,
+        active_posts INTEGER DEFAULT 0,
+        invited_by INTEGER DEFAULT NULL,
+        FOREIGN KEY (invited_by) REFERENCES users(user_id)
+    )
+    ''')
+
+    # POSTS TABLE
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS user_posts (
+        post_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type_post TEXT,
+        user_id INTEGER,
+        post_text TEXT,
+        chat_id TEXT,
+        add_time TEXT DEFAULT CURRENT_TIMESTAMP,
+        next_post_time TEXT,
+        is_active INTEGER DEFAULT 1,
+        data_created TEXT DEFAULT (DATETIME('now', 'localtime')),
+        expiry_date TEXT,
+        FOREIGN KEY (user_id) REFERENCES users(user_id)
+    )
+    ''')
+
+    # REFERRALS TABLE
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS referrals (
+        referral_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        inviter_id INTEGER,
+        join_date TEXT DEFAULT (DATETIME('now', 'localtime')),
+        earned_amount REAL DEFAULT 0.0,
+        FOREIGN KEY (inviter_id) REFERENCES users(user_id)
+    )
+    ''')
+
+    conn.commit()
+    conn.close()
+
+
+async def register_user(user_id, username, invited_by=None) -> bool:
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        # ADD NEW USER
+        cursor.execute('''
+        INSERT OR IGNORE INTO users (user_id, username, invited_by)
+        VALUES (?, ?, ?)
+        ''', (user_id, username, invited_by))
+
+        is_status = False
+
+        if not invited_by and not await is_exist_user(user_id):
+            cursor.execute('''
+            INSERT OR IGNORE INTO referrals (referral_id, inviter_id)
+            VALUES(?, ?)
+            ''', (user_id, None))
+            logger.info(f"Create new referrals table for new user: {user_id}")
+            is_status = True
+        elif invited_by and await add_new_referral(invited_by, user_id, conn, cursor):
+            logger.info(f"Add new referral: {invited_by} invite {user_id}")
+            is_status = True
+        else:
+            logger.info(f"Not add new referral: {invited_by} try invite {user_id}")
+            is_status = False
+
+        conn.commit()
+        return is_status
+    except Exception as e:
+        logger.error(f"Error registering user: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+async def add_new_referral(inviter_user_id, referral_user_id, conn, cursor) -> bool:
+    try:
+        # Check that the inviter does not invite himself
+        if inviter_user_id == referral_user_id:
+            return False
+
+        # Check that both users is exist
+        cursor.execute('SELECT 1 FROM users WHERE user_id IN (?, ?)', (inviter_user_id, referral_user_id))
+        if len(cursor.fetchall()) != 2:
+            return False
+
+        # Add item to referrals table
+        cursor.execute('''
+        INSERT INTO referrals (referral_id, inviter_id, join_date)
+        VALUES (?, ?, date('now'))
+        ''', (referral_user_id, inviter_user_id))
+
+        # Update item to users table
+        cursor.execute('''
+        UPDATE users
+        SET invited_by = ?
+        WHERE user_id = ?
+        ''', (inviter_user_id, referral_user_id))
+
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        logger.error(f"Not add referrals: {e}")
+        return False
+
+
+async def get_profile_info(user_id) -> tuple:
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+        SELECT user_id, username, balance, active_posts, registration_date, invited_by
+        FROM users WHERE user_id = ?
+        ''', (user_id,))
+
+        return cursor.fetchone()
+    finally:
+        conn.close()
+
+
+async def get_username(user_id) -> str:
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+        SELECT username
+        FROM users WHERE user_id = ?
+        ''', (user_id,))
+
+        return cursor.fetchone()[0]
+    finally:
+        conn.close()
+
+
+async def get_referrals_list(user_id) -> list[dict]:
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+        SELECT
+            u.username,
+            r.join_date
+        FROM referrals r
+        LEFT JOIN users u ON r.referral_id = u.user_id
+        WHERE r.inviter_id = ?
+        ORDER BY r.join_date DESC
+        ''', (user_id,))
+
+        columns = [column[0] for column in cursor.description]
+        referrals = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+        return referrals
+    except sqlite3.Error as e:
+        logger.error(f"Error getting referrals list: {e}")
+
+
+async def get_referral_info(user_id) -> tuple:
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+                SELECT COUNT(*) FROM referrals 
+                WHERE inviter_id = ?
+                ''', (user_id,))
+        result = cursor.fetchone()
+        total_refs = result[0] if result else '0'
+
+        cursor.execute('''
+        SELECT earned_amount FROM referrals
+        WHERE referral_id = ?
+        ''', (user_id,))
+        earned_amount = cursor.fetchone()[0]
+
+        return total_refs, earned_amount
+    finally:
+        conn.close()
+
+
+async def is_exist_user(user_id) -> bool:
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+        SELECT 1 FROM users WHERE user_id = ?
+        ''', (user_id,))
+
+        if cursor.fetchone():
+            return True
+        return False
+    finally:
+        conn.close()
+
+
+async def add_balance(user_id, amount) -> bool:
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+        UPDATE users SET balance = balance + ? WHERE user_id = ?
+        ''', (amount, user_id))
+
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        logger.error(f'Do not set user balance for {user_id}: {e}')
+        return False
+    finally:
+        conn.close()
+
+
+async def get_user_invited_by(user_id):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+        SELECT invited_by FROM users WHERE user_id = ?
+        ''', (user_id,))
+
+        return cursor.fetchone()[0]
+    except sqlite3.Error as e:
+        logger.error(f'Do not get user inviter for {user_id}: {e}')
+    finally:
+        conn.close()
+
+
+async def get_posts_list(user_id):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+        SELECT post_id, post_text, chat_id, add_time, is_active, type_post, next_post_time
+        FROM user_posts WHERE user_id = ?
+        ''', (user_id,))
+
+        return cursor.fetchall()
+    except sqlite3.Error as e:
+        logger.error(f'Do not get user posts list for {user_id}: {e}')
+    finally:
+        conn.close()
+
+
+async def add_post(user_id, post_text, chat_id, add_time, is_active=True, type_post='no_link', expiry_date_days=30) -> bool:
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    expiry_date = (datetime.now() + timedelta(days=expiry_date_days)).strftime('%Y-%m-%d %H:%M:%S')
+    next_post_time = (datetime.now() + timedelta(seconds=COUNTDOWN)).strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        cursor.execute('''
+        INSERT INTO user_posts (user_id, post_text, chat_id, add_time, is_active, type_post, expiry_date, next_post_time)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (user_id, post_text, chat_id, add_time, is_active, type_post, expiry_date, next_post_time))
+
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        logger.error(f'Do not add post to posts list for {user_id}: {e}')
+        return False
+    finally:
+        conn.close()
+
+
+async def delete_post(post_id):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+        DELETE FROM user_posts WHERE post_id = ?
+        ''', (post_id,))
+
+        conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f'Do not delete post {post_id}: {e}')
+    finally:
+        conn.close()
+
+
+async def get_post(post_id):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+        SELECT post_text, chat_id, add_time, is_active, type_post, expiry_date, next_post_time
+        FROM user_posts WHERE post_id = ?
+        ''', (post_id,))
+
+        return cursor.fetchone()
+    except sqlite3.Error as e:
+        logger.error(f"Do not get post id={post_id}: {e}")
+    finally:
+        conn.close()
+
+
+async def get_type_post(post_id):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+        SELECT type_post
+        FROM user_posts WHERE post_id = ?
+        ''', (post_id,))
+
+        return cursor.fetchone()[0]
+    except sqlite3.Error as e:
+        logger.error(f'Do not get type post for {post_id}: {e}')
+    finally:
+        conn.close()
+
+
+async def edit_post_text(post_id, post_text):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+            UPDATE user_posts 
+            SET post_text = ? WHERE post_id = ?
+            ''', (post_text, post_id))
+
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        logger.error(f'Do not edit post text for {post_id}: {e}')
+        return False
+    finally:
+        conn.close()
+
+
+async def remove_post(post_id):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+                DELETE FROM user_posts WHERE post_id = ?
+                ''', (post_id,))
+
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        logger.error(f'Do not remove post for {post_id}: {e}')
+        return False
+    finally:
+        conn.close()
+
+
+async def get_balance(user_id):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+                    SELECT balance FROM users WHERE user_id = ?
+                    ''', (user_id,))
+
+        return cursor.fetchone()[0]
+    except sqlite3.Error as e:
+        logger.error(f'Do not get user balance for {user_id}: {e}')
+    finally:
+        conn.close()
+
+
+async def remove_balance(user_id, amount):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+                        UPDATE users SET balance = balance - ? WHERE user_id = ?
+                        ''', (amount, user_id))
+
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        logger.error(f'Do not set user balance for {user_id}: {e}')
+        return False
+    finally:
+        conn.close()
+
+
+async def get_expired_posts(time_now):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+                SELECT post_id, user_id FROM user_posts 
+                WHERE is_active = 1 AND expiry_date < ?
+            ''', (time_now,))
+
+        return cursor.fetchall()
+    except sqlite3.Error as e:
+        logger.error(f'Do not get expired posts: {e}')
+    finally:
+        conn.close()
+
+
+async def set_is_active_post(post_id, is_active = 0):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+                    UPDATE user_posts SET is_active = ? 
+                    WHERE post_id = ?
+                ''', (is_active, post_id))
+
+        conn.commit()
+    except sqlite3.Error as e:
+        logger.error(f'Do not set is_active for post {post_id}: {e}')
+    finally:
+        conn.close()
+
+
+async def get_post_for_publication(time_now):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+                        SELECT post_text, chat_id, post_id FROM user_posts 
+                        WHERE next_post_time <= ? AND is_active = 1
+                    ''', (time_now,))
+
+        return cursor.fetchall()
+    except sqlite3.Error as e:
+        logger.error(f'Do not get posts for publication for time {time_now}: {e}')
+    finally:
+        conn.close()
+
+
+async def set_next_post_time(next_time, post_id):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+                            UPDATE user_posts
+                            SET next_post_time = ? WHERE post_id = ?
+                        ''', (next_time, post_id))
+
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        logger.error(f'Do not get posts for publication for time {next_time}: {e}')
+        return False
+    finally:
+        conn.close()
+
+
+async def add_earned_amount(user_id, amount):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+                            UPDATE referrals
+                            SET earned_amount = earned_amount + ? WHERE referral_id = ?
+                        ''', (amount, user_id))
+
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        logger.error(f'Do not set earned amount for {user_id}: {e}')
+        return False
+    finally:
+        conn.close()
+
+
+async def get_active_posts(user_id):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+        SELECT active_posts
+        FROM users WHERE user_id = ?
+        ''', (user_id,))
+
+        return cursor.fetchone()[0]
+    except sqlite3.Error as e:
+        logger.error(f'Do not get active posts count for {user_id}: {e}')
+    finally:
+        conn.close()
+
+
+async def add_active_posts(user_id, count=1):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+            UPDATE users
+            SET active_posts = active_posts + ? WHERE user_id = ?
+            ''', (count, user_id))
+
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        logger.error(f'Do not add active posts count for {user_id}: {e}')
+        return False
+    finally:
+        conn.close()
+
+
+async def remove_active_posts(user_id, count=1):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+            UPDATE users
+            SET active_posts = active_posts - ? WHERE user_id = ?
+            ''', (count, user_id))
+
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        logger.error(f'Do not remove active posts count for {user_id}: {e}')
+        return False
+    finally:
+        conn.close()
