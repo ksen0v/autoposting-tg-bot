@@ -1,4 +1,4 @@
-## Autoposting Bot for Telegram 
+## Autoposting Shop Bot for Telegram
 
  - using Aiogram version 3.5.0
  - using CryptoBot @CryptoBot
