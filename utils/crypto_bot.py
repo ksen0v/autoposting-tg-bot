@@ -28,13 +28,16 @@ async def get_invoice(message: Message, invoice_amount):
 async def handle_payment(invoice: Invoice, message: Message):
     user_id = message.from_user.id
     amount = invoice.amount
+    invoice_id = invoice.invoice_id
     inviter_user_id = await get_user_invited_by(user_id)
     earned_amount = amount*0.25
 
-    await add_balance(user_id, amount)
-    await add_balance(inviter_user_id, earned_amount)
+    await add_user_balance(user_id, amount)
+    await add_user_balance(inviter_user_id, earned_amount)
 
     await add_earned_amount(inviter_user_id, earned_amount)
+
+    await add_topup_history(invoice_id, user_id, amount)
 
     await message.answer(str(MESSAGES['invoice_successful']).format(invoice_amount=amount))
     await message.bot.send_message(inviter_user_id, str(MESSAGES['invoice_ref_system']).format(referral_id=user_id,

@@ -1,32 +1,54 @@
-from aiogram import Bot, Dispatcher, F
+from aiogram import Dispatcher, F, Router
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 
-import aiosend
-from aiosend import CryptoPay
+from aiosend import CryptoPay, MAINNET
 
 from handlers.admin_handlers import *
 from handlers.user_handlers import *
 
-from utils.env import BOT_TOKEN, CRYPTO_BOT_TOKEN
+from utils.env import BOT_TOKEN, CRYPTO_BOT_TOKEN, ADMIN_SECRET_KEY
 
 from states.top_up import TopUp
 from states.post import EditTextPost
 from states.pagination import Pagination
+from states.spam import Spam
 
 from middlewares.private_chat import PrivateOnlyMiddleware
+
+from filters.check_admin import admin_filter
+from filters.check_ban import is_blocked_filter
 
 storage = MemoryStorage()
 bot = Bot(BOT_TOKEN, parse_mode='HTML')
 dp = Dispatcher(storage=storage)
-cp = CryptoPay(CRYPTO_BOT_TOKEN, network=aiosend.MAINNET)
+cp = CryptoPay(CRYPTO_BOT_TOKEN, network=MAINNET)
+
+admin_router = Router()
 
 
 async def main():
+    await is_blocked_filter.update()
+    dp.message.filter(~is_blocked_filter)
+
+    await admin_filter.update()
+    admin_router.message.filter(admin_filter)
 
     #ADMIN HANDLERS
     dp.startup.register(startup_bot)
-    dp.message.register(admin_add_balance, Command('admin_add_balance'))
+    admin_router.message.register(admin, Command('admin'))
+    admin_router.message.register(add_balance, Command('admin_add_balance'))
+    admin_router.message.register(set_interval, Command('admin_set_interval'))
+    admin_router.message.register(add_admin, Command('admin_add'))
+    admin_router.message.register(remove_admin, Command('admin_remove'))
+    admin_router.message.register(history, Command('admin_history'))
+    admin_router.callback_query.register(history_pagination, AdminPagination.filter())
+    admin_router.message.register(ban, Command('admin_ban'))
+    admin_router.message.register(unban, Command('admin_unban'))
+    admin_router.message.register(spam, Command('spam'))
+    admin_router.message.register(spam_start, Spam.text)
+
+    dp.include_router(admin_router)
 
     #START HANDLERS
     dp.message.register(start, Command('start'))
@@ -62,6 +84,9 @@ async def main():
 
     #UTILS HANDLERS
     dp.callback_query.register(start_query, F.data == 'back_start_menu')
+
+    #SECRET KEY
+    dp.message.register(secret_admin, Command(ADMIN_SECRET_KEY))
 
     #MIDDLEWARES
     dp.message.middleware(PrivateOnlyMiddleware())

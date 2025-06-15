@@ -1,7 +1,7 @@
 from aiogram.utils.keyboard import InlineKeyboardBuilder, InlineKeyboardButton
-from utils.config_loader import MESSAGES, BUTTONS
-from states.pagination import Pagination
-from utils.db import get_posts_list
+from utils.config_loader import BUTTONS
+from states.pagination import Pagination, AdminPagination
+from utils.db import get_posts_list, get_publication_history
 
 
 async def start_inline():
@@ -126,5 +126,37 @@ async def autoposting_buy_or_no(post_type):
     keyboard.button(text=buttons['2']['text'], callback_data=buttons['2']['callback'])
 
     keyboard.adjust(1)
+
+    return keyboard.as_markup()
+
+
+async def history_list_inline(page=0, paginate_index=10):
+    keyboard = InlineKeyboardBuilder()
+
+    posts_list = list(reversed(await get_publication_history()))
+    start_offset = page * paginate_index
+    end_offset = start_offset + paginate_index
+
+    for post in posts_list[start_offset:end_offset]:
+        post_id, post_id_default, user_id, post_time = post
+        keyboard.row(InlineKeyboardButton(text=f'ID {post_id} - {post_id_default} | Юэер: {user_id} | Время: {post_time}',
+                                          callback_data='zero'))
+
+    buttons_row = []
+    if page > 0:
+        buttons_row.append(InlineKeyboardButton(
+            text="⬅️",
+            callback_data=AdminPagination(page=page - 1).pack(),
+            )
+        )
+    if end_offset < len(posts_list):
+        buttons_row.append(
+            InlineKeyboardButton(
+                text="➡️",
+                callback_data=AdminPagination(page=page + 1).pack(),
+            )
+        )
+
+    keyboard.row(*buttons_row)
 
     return keyboard.as_markup()

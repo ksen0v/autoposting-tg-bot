@@ -298,11 +298,12 @@ async def autoposting_add_post(message: Message, state: FSMContext):
     post_type = data['post_type']
     post_text = data['post_text']
     user_id = message.from_user.id
+    add_time = await get_countdown()
 
     if await is_contain_link(post_text) and post_type == 'no_link':
         await message.bot.send_message(user_id, MESSAGES['edit_text_error_link'])
     else:
-        await add_post(user_id, post_text, CHAT_ID, 30, True, post_type)
+        await add_post(user_id, post_text, CHAT_ID, add_time, True, post_type)
         await add_active_posts(user_id)
         await message.bot.send_message(user_id, MESSAGES['autoposting_post_added'])
         await state.clear()

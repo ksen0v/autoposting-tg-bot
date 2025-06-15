@@ -4,12 +4,10 @@ import os
 
 def load_config():
     default_config = {
-        "admin_id": 111,
         "bot_username": "your_bot",
         "min_top_up_amount": 350,
         "chat_id": 111,
         "countdown_post_check": 300,
-        "countdown": 1800,
         "prices": {
             "link_post_price": 500,
             "no_link_post_price": 350
@@ -139,7 +137,6 @@ def load_config():
 
 
 config = load_config()
-ADMIN_ID = config['admin_id']
 MESSAGES = config['messages']
 BUTTONS = config['buttons']
 BOT_USERNAME = config['bot_username']
@@ -147,4 +144,3 @@ MIN_TOP_UP_AMOUNT = config['min_top_up_amount']
 PRICES = config['prices']
 CHAT_ID = config['chat_id']
 COUNTDOWN_POST_CHECK = config['countdown_post_check']
-COUNTDOWN = config['countdown']
