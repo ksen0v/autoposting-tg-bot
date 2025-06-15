@@ -12,12 +12,13 @@
   pip intall -r requirements.txt
   ```
   
-- Create .env file and add your BOT_TOKEN, CRYPTO_BOT_TOKEN (crypto bot token for invoices)
+- Create .env file and add your BOT_TOKEN, CRYPTO_BOT_TOKEN (crypto bot token for invoices), ADMIN_SECRET_KEY (add admin using secret key: enter bot command /[ADMIN_SECRET_KEY])
    .env LOOK LIKE:
 
   ```sh
    BOT_TOKEN='your_token'
    CRYPTO_BOT_TOKEN='your_token'
+   ADMIN_SECRET_KEY='your_secret_key'
   ```
   
 - Run for create config file config.json:
