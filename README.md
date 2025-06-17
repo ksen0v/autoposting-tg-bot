@@ -7,7 +7,7 @@
 
 ## INSTALL
 - Install requirements:
-- 
+ 
   ```sh
   pip intall -r requirements.txt
   ```
